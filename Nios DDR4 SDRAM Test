@@ -1,0 +1,27 @@
+=Design Tools=
+
+*Quartus Prime 18.0.0 Standard Edition
+*Nios II Software Build Tools for Eclipse 18.0
+
+=System Block Diagram=
+
+[[File:De10 advanced revc ddr4 nios bg.jpg|700px]] 
+
+=Demonstration Source Code=
+*Quartus Project directory: NIOS_DDR4
+*Nios II Eclipse: NIOS_DDR4 \software
+*Nios II Project Compilation
+
+=Nios II Project Compilation=
+
+=Demonstration Batch File=
+Demo Batch File Folder: NIOS_DDR4 \demo_batch
+
+Demo batch file includes:
+
+*Batch File for USB-Blaseter II: test.bat, test.sh
+*FPGA Configure File: NIOS_DDR4.sof
+*Nios II Program: DDR4_Test.elf
+
+=Demonstration Setup=
+[[File:De10 advanced revc ddr4 nios.png|600px]]
