@@ -1,0 +1,116 @@
+
+.include "address_map_nios2.s" .include "globals.s"
+/* This program demonstrates use of interrupts. It * first starts an interval timer with 50 msec timeouts, and then enables * Nios II interrupts from the interval timer and pushbutton KEYs * * The interrupt service routine for the interval timer displays a pattern * on the LEDs, and shifts this pattern either left or right: * KEY[0]: loads a new pattern from the SW switches * KEY[1]: toggles the shift direction the displayed pattern ******************************************************************************/
+.text # executable code follows .global _start _start: /* set up the stack */ movia sp, SDRAM_END - 3 # stack starts from largest memory # address
+movia r16, TIMER_BASE # interval timer base address /* set the interval timer period for scrolling the LED lights */ movia r12, 5000000 # 1/(100 MHz) x (5 x 10^6) = 50 msec sthio r12, 8(r16) # store the low half word of counter # start value srli r12, r12, 16 sthio r12, 0xC(r16) # high half word of counter start value
+/* start interval timer, enable its interrupts */ movi r15, 0b0111 # START = 1, CONT = 1, ITO = 1 sthio r15, 4(r16)
+/* write to the pushbutton port interrupt mask register */ movia r15, KEY_BASE # pushbutton key base address movi r7, 0b11 # set interrupt mask bits stwio r7, 8(r15) # interrupt mask register is (base + 8)
+/* enable Nios II processor interrupts */ movia r7, 0x00000001 # get interrupt mask bit for interval # timer movia r8, 0x00000002 # get interrupt mask bit for pushbuttons or r7, r7, r8 wrctl ienable, r7 # enable interrupts for the given mask # bits movi r7, 1 wrctl status, r7 # turn on Nios II interrupt processing
+
+IDLE:
+
+br IDLE # main program simply idles
+.data /* The global variables used by the interrupt service routines for the interval * timer and the pushbutton keys are declared below ******************************************************************************/ .global PATTERN PATTERN: .word 0x0F0F0F0F # pattern to show on the LED lights .global SHIFT_DIR SHIFT_DIR: .word RIGHT # pattern shifting direction
+.end
+
+/* RESET SECTION * Note: "ax" is REQUIRED to designate the section as allocatable and executable. * Also, the Debug Client automatically places the ".reset" section at the reset * location specified in the CPU settings in SOPC Builder. ******************************************************************************/ .section .reset, "ax"
+movia r2, _start jmp r2 # branch to main program
+/* EXCEPTIONS SECTION * Note: "ax" is REQUIRED to designate the section as allocatable and executable. * Also, the Monitor Program automatically places the ".exceptions" section at * the exception location specified in the CPU settings in SOPC Builder. ******************************************************************************/ .section .exceptions, "ax" .global EXCEPTION_HANDLER
+EXCEPTION_HANDLER: subi sp, sp, 16 # make room on the stack stw et, 0(sp)
+rdctl et, ctl4 beq et, r0, SKIP_EA_DEC # interrupt is not external
+subi ea, ea, 4 # must decrement ea by one instruction # for external interrupts, so that the # interrupted instruction will be run SKIP_EA_DEC: stw ea, 4(sp) # save all used registers on the Stack stw ra, 8(sp) # needed if call inst is used stw r22, 12(sp)
+rdctl et, ctl4 bne et, r0, CHECK_LEVEL_0 # interrupt is an external interrupt
+NOT_EI: # exception must be unimplemented # instruction or TRAP instruction. This # code does not handle those cases br END_ISR
+CHECK_LEVEL_0: # interval timer is interrupt level 0 andi r22, et, 0b1 beq r22, r0, CHECK_LEVEL_1
+call INTERVAL_TIMER_ISR br END_ISR
+CHECK_LEVEL_1: # pushbutton port is interrupt level 1
+
+andi r22, et, 0b10 beq r22, r0, END_ISR # other interrupt levels are not handled in # this code
+call PUSHBUTTON_ISR
+END_ISR:
+ldw et, 0(sp) # restore all used register to previous # values ldw ea, 4(sp) ldw ra, 8(sp) # needed if call inst is used ldw r22, 12(sp) addi sp, sp, 16
+.end
+
+.include "address_map_nios2.s" .include "globals.s" .extern PATTERN # externally defined variables .extern SHIFT_DIR /******************************************************************************* * Interval timer - Interrupt Service Routine * * Shifts a PATTERN being displayed. The shift direction is determined by the * external variable SHIFT_DIR. ******************************************************************************/ .global INTERVAL_TIMER_ISR INTERVAL_TIMER_ISR: subi sp, sp, 40 # reserve space on the stack stw ra, 0(sp) stw r4, 4(sp) stw r5, 8(sp) stw r6, 12(sp) stw r8, 16(sp) stw r10, 20(sp) stw r20, 24(sp) stw r21, 28(sp) stw r22, 32(sp) stw r23, 36(sp)
+movia r10, TIMER_BASE # interval timer base address sthio r0, 0(r10) # clear the interrupt
+movia r20, LED_BASE # LED base address movia r21, PATTERN # set up a pointer to the display pattern movia r22, SHIFT_DIR # set up a pointer to the shift direction variable
+ldw r6, 0(r21) # load the pattern stwio r6, 0(r20) # store to LEDs  
+CHECK_SHIFT: ldw r5, 0(r22) # get shift direction movi r8, RIGHT bne r5, r8, SHIFT_L
+SHIFT_R:
+movi r5, 1 # set r5 to the constant value 1 ror r6, r6, r5 # rotate the displayed pattern right br STORE_PATTERN
+SHIFT_L:
+movi r5, 1 # set r5 to the constant value 1 rol r6, r6, r5 # shift left
+STORE_PATTERN: stw r6, 0(r21) # store display pattern
+38 Intel Corporation - FPGA University Program November 2017
+DE10-STANDARD COMPUTER SYSTEM WITH NIOS® II For Quartus® Prime 17.1
+END_INTERVAL_TIMER_ISR: ldw ra, 0(sp) # restore registers ldw r4, 4(sp) ldw r5, 8(sp) ldw r6, 12(sp) ldw r8, 16(sp) ldw r10, 20(sp) ldw r20, 24(sp) ldw r21, 28(sp) ldw r22, 32(sp) ldw r23, 36(sp) addi sp, sp, 40 # release the reserved space on the stack
+.end
+
+.include "address_map_nios2.s" .include "globals.s" .extern PATTERN # externally defined variables .extern SHIFT_DIR /******************************************************************************* * Pushbutton - Interrupt Service Routine * * This routine checks which KEY has been pressed and updates the global * variables as required. ******************************************************************************/ .global PUSHBUTTON_ISR PUSHBUTTON_ISR: subi sp, sp, 20 # reserve space on the stack stw ra, 0(sp) stw r10, 4(sp) stw r11, 8(sp) stw r12, 12(sp) stw r13, 16(sp)
+movia r10, KEY_BASE # base address of pushbutton KEY # parallel port ldwio r11, 0xC(r10) # read edge capture register stwio r11, 0xC(r10) # clear the interrupt
+CHECK_KEY0: andi r13, r11, 0b0001 # check KEY0 beq r13, zero, CHECK_KEY1
+movia r10, SW_BASE # base address of SW slider # switches parallel port ldwio r12, 0(r10) # load a new pattern from the SW # switches movia r10, PATTERN # set up a pointer to the pattern # variable stw r12, 0(r10) # store the new pattern to the # global variable
+CHECK_KEY1: andi r13, r11, 0b0010 # check KEY1 beq r13, zero, END_PUSHBUTTON_ISR
+movia r10, SHIFT_DIR # set up a pointer to the shift # direction variable ldw r12, 0(r10) # load the current shift direction xori r12, r12, 1 # toggle the direction stw r12, 0(r10) # store the new shift direction
+END_PUSHBUTTON_ISR: ldw ra, 0(sp) # Restore all used register to # previous ldw r10, 4(sp)
+
+ldw r11, 8(sp) ldw r12, 12(sp) ldw r13, 16(sp) addi sp, sp, 20
+.end
+
+#include "address_map_nios2.h" #include "globals.h" // defines global values #include "nios2_ctrl_reg_macros.h"
+/* the global variables are written by interrupt service routines; we have to * declare * these as volatile to avoid the compiler caching their values in registers */ volatile int pattern = 0x0000000F; // pattern for shifting volatile int shift_dir = LEFT; // direction to shift the pattern volatile int shift_enable = ENABLE; // enable/disable shifting of the pattern
+/* This program demonstrates use of interrupts. It * first starts the interval timer with 50 msec timeouts, and then enables * Nios II interrupts from the interval timer and pushbutton KEYs * * The interrupt service routine for the interval timer displays a pattern on * the LED lights, and shifts this pattern either left or right. The shifting * direction is reversed when KEY[1] is pressed ********************************************************************************/ int main(void) { /* Declare volatile pointers to I/O registers (volatile means that IO load * and store instructions will be used to access these pointer locations, * instead of regular memory loads and stores) */ volatile int * interval_timer_ptr = (int *)TIMER_BASE; // interal timer base address volatile int * KEY_ptr = (int *)KEY_BASE; // pushbutton KEY address
+/* set the interval timer period for scrolling the LED lights */ int counter = 2500000; // 1/(50 MHz) x (2500000) = 50 msec *(interval_timer_ptr + 0x2) = (counter & 0xFFFF); *(interval_timer_ptr + 0x3) = (counter >> 16) & 0xFFFF;
+/* start interval timer, enable its interrupts */ *(interval_timer_ptr + 1) = 0x7; // STOP = 0, START = 1, CONT = 1, ITO = 1
+*(KEY_ptr + 2) = 0x3; // enable interrupts for all pushbuttons
+/* set interrupt mask bits for levels 0 (interval timer) and level 1 * (pushbuttons) */ NIOS2_WRITE_IENABLE(0x3);
+NIOS2_WRITE_STATUS(1); // enable Nios II interrupts
+while (1) ; // main program simply idles
+}
+
+#ifndef __NIOS2_CTRL_REG_MACROS__ #define __NIOS2_CTRL_REG_MACROS__
+/*/ /* Macros for accessing the control registers. */ /*/
+#define NIOS2_READ_STATUS(dest) \ do { dest = __builtin_rdctl(0); } while (0)
+#define NIOS2_WRITE_STATUS(src) \ do { __builtin_wrctl(0, src); } while (0)
+#define NIOS2_READ_ESTATUS(dest) \ do { dest = __builtin_rdctl(1); } while (0)
+#define NIOS2_READ_BSTATUS(dest) \ do { dest = __builtin_rdctl(2); } while (0)
+#define NIOS2_READ_IENABLE(dest) \ do { dest = __builtin_rdctl(3); } while (0)
+#define NIOS2_WRITE_IENABLE(src) \ do { __builtin_wrctl(3, src); } while (0)
+#define NIOS2_READ_IPENDING(dest) \ do { dest = __builtin_rdctl(4); } while (0)
+#define NIOS2_READ_CPUID(dest) \ do { dest = __builtin_rdctl(5); } while (0)
+#endif
+
+#include "nios2_ctrl_reg_macros.h"
+/* function prototypes */ void main(void); void interrupt_handler(void); void interval_timer_ISR(void); void pushbutton_ISR(void);
+/* The assembly language code below handles CPU reset processing */ void the_reset(void) __attribute__((section(".reset"))); void the_reset(void) /******************************************************************************* * Reset code. By giving the code a section attribute with the name ".reset" we * allow the linker program to locate this code at the proper reset vector * address. This code just calls the main program. ******************************************************************************/ { asm(".set noat"); /* Instruct the assembler NOT to use reg at (r1) as * a temp register for performing optimizations */ asm(".set nobreak"); /* Suppresses a warning message that says that * some debuggers corrupt regs bt (r25) and ba * (r30) */ asm("movia r2, main"); // Call the C language main program asm("jmp r2"); }
+/* The assembly language code below handles CPU exception processing. This * code should not be modified; instead, the C language code in the function * interrupt_handler() can be modified as needed for a given application. */ void the_exception(void) __attribute__((section(".exceptions"))); void the_exception(void) /******************************************************************************* * Exceptions code. By giving the code a section attribute with the name * ".exceptions" we allow the linker program to locate this code at the proper * exceptions vector address. * This code calls the interrupt handler and later returns from the exception. ******************************************************************************/ { asm("subi sp, sp, 128"); asm("stw et, 96(sp)"); asm("rdctl et, ctl4"); asm("beq et, r0, SKIP_EA_DEC"); // Interrupt is not external asm("subi ea, ea, 4"); /* Must decrement ea by one instruction * for external interupts, so that the * interrupted instruction will be run */
+asm("SKIP_EA_DEC:"); asm("stw r1, 4(sp)"); // Save all registers asm("stw r2, 8(sp)");
+
+asm("stw r3, 12(sp)"); asm("stw r4, 16(sp)"); asm("stw r5, 20(sp)"); asm("stw r6, 24(sp)"); asm("stw r7, 28(sp)"); asm("stw r8, 32(sp)"); asm("stw r9, 36(sp)"); asm("stw r10, 40(sp)"); asm("stw r11, 44(sp)"); asm("stw r12, 48(sp)"); asm("stw r13, 52(sp)"); asm("stw r14, 56(sp)"); asm("stw r15, 60(sp)"); asm("stw r16, 64(sp)"); asm("stw r17, 68(sp)"); asm("stw r18, 72(sp)"); asm("stw r19, 76(sp)"); asm("stw r20, 80(sp)"); asm("stw r21, 84(sp)"); asm("stw r22, 88(sp)"); asm("stw r23, 92(sp)"); asm("stw r25, 100(sp)"); // r25 = bt (skip r24 = et, because it is saved // above) asm("stw r26, 104(sp)"); // r26 = gp // skip r27 because it is sp, and there is no point in saving this asm("stw r28, 112(sp)"); // r28 = fp asm("stw r29, 116(sp)"); // r29 = ea asm("stw r30, 120(sp)"); // r30 = ba asm("stw r31, 124(sp)"); // r31 = ra asm("addi fp, sp, 128");
+asm("call interrupt_handler"); // Call the C language interrupt handler
+asm("ldw r1, 4(sp)"); // Restore all registers asm("ldw r2, 8(sp)"); asm("ldw r3, 12(sp)"); asm("ldw r4, 16(sp)"); asm("ldw r5, 20(sp)"); asm("ldw r6, 24(sp)"); asm("ldw r7, 28(sp)"); asm("ldw r8, 32(sp)"); asm("ldw r9, 36(sp)"); asm("ldw r10, 40(sp)"); asm("ldw r11, 44(sp)"); asm("ldw r12, 48(sp)"); asm("ldw r13, 52(sp)"); asm("ldw r14, 56(sp)"); asm("ldw r15, 60(sp)"); asm("ldw r16, 64(sp)"); asm("ldw r17, 68(sp)"); asm("ldw r18, 72(sp)");
+
+asm("ldw r19, 76(sp)"); asm("ldw r20, 80(sp)"); asm("ldw r21, 84(sp)"); asm("ldw r22, 88(sp)"); asm("ldw r23, 92(sp)"); asm("ldw r24, 96(sp)"); asm("ldw r25, 100(sp)"); // r25 = bt asm("ldw r26, 104(sp)"); // r26 = gp // skip r27 because it is sp, and we did not save this on the stack asm("ldw r28, 112(sp)"); // r28 = fp asm("ldw r29, 116(sp)"); // r29 = ea asm("ldw r30, 120(sp)"); // r30 = ba asm("ldw r31, 124(sp)"); // r31 = ra
+asm("addi sp, sp, 128");
+asm("eret");
+}
+
+/* Interrupt Service Routine * Determines what caused the interrupt and calls the appropriate * subroutine. * * ipending - Control register 4 which has the pending external interrupts ******************************************************************************/ void interrupt_handler(void) { int ipending; NIOS2_READ_IPENDING(ipending); if (ipending & 0x1) // interval timer is interrupt level 0 { interval_timer_ISR(); } if (ipending & 0x2) // pushbuttons are interrupt level 1 { pushbutton_ISR(); } // else, ignore the interrupt return; } Listing 11. Reset and exception handler C code.
+
+#include "address_map_nios2.h" #include "globals.h" // defines global values
+extern volatile int pattern, shift_dir, shift_enable; /* Interval timer interrupt service routine * * Shifts a PATTERN being displayed on the LED lights. The shift direction * is determined by the external variable key_dir. ******************************************************************************/ void interval_timer_ISR() { volatile int * interval_timer_ptr = (int *)TIMER_BASE; volatile int * LEDG_ptr = (int *)LED_BASE; // LED address
+*(interval_timer_ptr) = 0; // clear the interrupt
+*(LEDG_ptr) = pattern; // display pattern on LED
+if (shift_enable == DISABLE) // check if shifting is disabled return;
+/* rotate the pattern shown on the LEDG lights */ if (shift_dir == LEFT) // rotate left if (pattern & 0x80000000) pattern = (pattern << 1) | 1; else pattern = pattern << 1; else // rotate right if (pattern & 0x00000001) pattern = (pattern >> 1) | 0x80000000; else pattern = (pattern >> 1) & 0x7FFFFFFF;
+return;
+}
+
+#include "address_map_nios2.h" #include "globals.h" // defines global values
+extern volatile int pattern, shift_dir, shift_enable; /* Pushbutton - Interrupt Service Routine * * This routine checks which KEY has been pressed and updates the global * variables as required. ******************************************************************************/ void pushbutton_ISR(void) { volatile int * KEY_ptr = (int *)KEY_BASE; volatile int * slider_switch_ptr = (int *)SW_BASE; int press;
+press = *(KEY_ptr + 3); // read the pushbutton interrupt register *(KEY_ptr + 3) = press; // Clear the interrupt
+if (press & 0x1) // KEY0 pattern = *slider_switch_ptr;
+if (press & 0x2) // KEY1 shift_dir = shift_dir ^ 1;
+return;
+}
+
